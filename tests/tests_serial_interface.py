@@ -73,15 +73,45 @@ class TestSerialInterface(unittest.TestCase):
         mock_serial_class.assert_called_with(port="COM1", baudrate=115200, timeout=0.1)
 
     @patch("PySerialInterface.SerialInterface.Serial")
-    def test_variables(self, mock_serial_class):
-        mock_serial_class.return_value = self.mock_serial_instance
+    def test_connect_to_second_port_success(self, mock_serial_class):
+        def serial_side_effect(*args, **kwargs):
+            port = kwargs.get("port")
+            baudrate = kwargs.get("baudrate")
+            timeout = kwargs.get("timeout")
+            if port == "COM1":
+                raise SerialException("No port")
+            else:
+                mock_instance = MagicMock()
+                mock_instance.port = port
+                mock_instance.baudrate = baudrate
+                mock_instance.timeout = timeout
+                mock_instance.is_open = True
+                return mock_instance
 
-        self.si = SerialInterface(["COM2", "COM1"], 9600, 1.5)
+        target_baudrate = 230400
+        target_timeout = 1.5
+
+        mock_serial_class.side_effect = serial_side_effect
+        self.si = SerialInterface(["COM1", "COM2"], baudrate=target_baudrate, timeout=target_timeout)
         self.si.start()
 
+        time.sleep(1)  # give time for serial connection to establish
+
+        connected = self.si.is_connected()
+        serial = self.si.get_serial()
+
         # Assertions
+        self.assertTrue(connected)
         self.assertIsNotNone(self.si.get_serial())
-        mock_serial_class.assert_called_with(port="COM2", baudrate=9600, timeout=1.5)
+        self.assertEqual("COM2", serial.port)
+        self.assertEqual(target_baudrate, serial.baudrate)
+        self.assertEqual(target_timeout, serial.timeout)
+        # Inspect the sequence of calls
+        expected_calls = [
+            unittest.mock.call(port="COM1", baudrate=target_baudrate, timeout=target_timeout),
+            unittest.mock.call(port="COM2", baudrate=target_baudrate, timeout=target_timeout)
+        ]
+        self.assertEqual(mock_serial_class.call_args_list, expected_calls)
 
     @patch("PySerialInterface.SerialInterface.Serial")
     def test_no_com_ports(self, mock_serial_class):
