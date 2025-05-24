@@ -11,7 +11,7 @@ from queue import Queue, Empty
 from threading import Thread
 from dataclasses_json import dataclass_json
 from serial import Serial, SerialException
-from PySerialInterface.SerialRequest import Event, CLIResponseMessage, SerialRequest
+from PySerialInterface.SerialRequest import Event, CLIResponseMessage, SerialRequest, EmptyMessage
 
 
 @dataclass_json
@@ -60,7 +60,7 @@ class SerialInterface(Thread):
     __response_queue: Queue = Queue()
 
     # Constructor
-    def __init__(self, port_list: List[str], baudrate=115200, timeout=0.1, logger=None):
+    def __init__(self, port_list: List[str], baudrate=115200, timeout=0.1, logger=None, received_msg_cb=None):
         super().__init__(daemon=True)
 
         if logger is None:
@@ -74,6 +74,7 @@ class SerialInterface(Thread):
         self.__baudrate = baudrate
         self.__serial_list = port_list
         self.__timeout: float = timeout
+        self.__received_msg_cb = received_msg_cb
 
     def get_serial(self):
         return self.__serial
@@ -131,6 +132,11 @@ class SerialInterface(Thread):
         line = self.__serial.read_until(b'\r')
         if line:
             msg = SerialRequest.parse_message(line)
+            if not isinstance(msg, EmptyMessage):
+                self.__event_to_log(msg, logging.DEBUG)
+                # If we have received message callback, call it
+                if self.__received_msg_cb is not None:
+                    self.__received_msg_cb(msg)
             return msg
 
         return None
@@ -139,7 +145,6 @@ class SerialInterface(Thread):
         timeout_time = time.time() + timeout
         while True:
             msg = self.__read_message()
-            self.__event_to_log(msg, logging.DEBUG)
             # Got something ?
             if isinstance(msg, resp_type):
                 if type(required_resp_start) == list:
@@ -188,14 +193,7 @@ class SerialInterface(Thread):
             self.__event_to_log(msg)
             return msg
 
-    def __process_incoming_message(self):
-        msg = self.__read_message()
-        if msg is not None:
-            self.__event_to_log(msg, logging.DEBUG)
-
     def __process_request_queue(self):
-        if self.__request_queue.empty():
-            return
         try:
             request: SerialRequest = self.__request_queue.get(block=False)
             resp = self.__handle_serial_request(request)
@@ -220,7 +218,7 @@ class SerialInterface(Thread):
                 if not self.__request_queue.empty():
                     self.__process_request_queue()
                 else:
-                    self.__process_incoming_message()
+                    self.__read_message()  # Read message to log and callback, no response matching
         except SerialException as e:
             err = e
         finally:

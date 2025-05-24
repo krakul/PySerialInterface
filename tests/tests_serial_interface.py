@@ -1,16 +1,31 @@
 import unittest
 from unittest.mock import MagicMock, patch
 from serial import SerialException
-from PySerialInterface.SerialInterface import SerialInterface, CLIResponseMessage, ResponseTimeout, SerialNotConnected
+from PySerialInterface.SerialInterface import SerialInterface, CLIResponseMessage, ResponseTimeout, SerialNotConnected, \
+    Event
 import time
 from logging import getLogger
 import logging
 logging.basicConfig(level=logging.INFO)
 
 
+def mock_read_until(msg: str):
+    count = 0
+    while True:
+        count += 1
+        if count % 10 == 0:
+            yield msg.encode('utf-8') + b"\r\n"
+        else:
+            yield b""
+
+
 class TestSerialInterface(unittest.TestCase):
 
+    def received_msg_cb(self, msg: Event):
+        self.received_msg_list.append(msg)
+
     def setUp(self):
+        self.received_msg_list = []
         self.si = None  # Track the SerialInterface instance
         self.mock_serial_instance = MagicMock()
         self.logger = getLogger(self.__class__.__name__)
@@ -95,7 +110,7 @@ class TestSerialInterface(unittest.TestCase):
 
     @patch("PySerialInterface.SerialInterface.Serial")
     def test_handle_serial_request_timeout(self, mock_serial_class):
-        self.mock_serial_instance.read_until.return_value = b"NOT OK\r\n"
+        self.mock_serial_instance.read_until.side_effect = mock_read_until("NOT OK")
         mock_serial_class.return_value = self.mock_serial_instance
         self.si = SerialInterface(["COM1"])
         self.si.start()
@@ -115,7 +130,7 @@ class TestSerialInterface(unittest.TestCase):
 
     @patch("PySerialInterface.SerialInterface.Serial")
     def test_handle_serial_request_specific_timeout(self, mock_serial_class):
-        self.mock_serial_instance.read_until.return_value = b"NOT OK\r\n"
+        self.mock_serial_instance.read_until.side_effect = mock_read_until("NOT OK")
         mock_serial_class.return_value = self.mock_serial_instance
         self.si = SerialInterface(["COM1"])
         self.si.start()
@@ -141,7 +156,7 @@ class TestSerialInterface(unittest.TestCase):
 
     @patch("PySerialInterface.SerialInterface.Serial")
     def test_handle_serial_request_retry_cnt(self, mock_serial_class):
-        self.mock_serial_instance.read_until.return_value = b"NOT OK\r\n"
+        self.mock_serial_instance.read_until.side_effect = mock_read_until("NOT OK")
         mock_serial_class.return_value = self.mock_serial_instance
         self.si = SerialInterface(["COM1"])
         self.si.start()
@@ -168,7 +183,7 @@ class TestSerialInterface(unittest.TestCase):
 
     @patch("PySerialInterface.SerialInterface.Serial")
     def test_handle_serial_request_success(self, mock_serial_class):
-        self.mock_serial_instance.read_until.return_value = b"OK THIS IS GOOD\r\n"
+        self.mock_serial_instance.read_until.side_effect = mock_read_until("OK THIS IS GOOD")
         mock_serial_class.return_value = self.mock_serial_instance
         self.si = SerialInterface(["COM1"])
         self.si.start()
@@ -187,7 +202,7 @@ class TestSerialInterface(unittest.TestCase):
 
     @patch("PySerialInterface.SerialInterface.Serial")
     def test_handle_serial_request_only_match_start(self, mock_serial_class):
-        self.mock_serial_instance.read_until.return_value = b"NOT OK\r\n"
+        self.mock_serial_instance.read_until.side_effect = mock_read_until("NOT OK")
         mock_serial_class.return_value = self.mock_serial_instance
         self.si = SerialInterface(["COM1"])
         self.si.start()
@@ -202,6 +217,22 @@ class TestSerialInterface(unittest.TestCase):
         )
 
         self.assertIsInstance(event, ResponseTimeout)
+
+    @patch("PySerialInterface.SerialInterface.Serial")
+    def test_received_msg_cb(self, mock_serial_class):
+        self.mock_serial_instance.read_until.side_effect = mock_read_until("NOT OK")
+        mock_serial_class.return_value = self.mock_serial_instance
+        self.si = SerialInterface(["COM1"], received_msg_cb=self.received_msg_cb)
+        self.si.start()
+
+        time.sleep(1)  # give time for serial connection to establish
+
+        connected = self.si.is_connected()
+        self.assertTrue(connected)
+
+        self.assertGreater(len(self.received_msg_list), 0)
+        msg = self.received_msg_list[0]
+        self.assertEqual(msg.content, "NOT OK")
 
     def test_queue_request_wait_response_not_connected(self):
         self.si = SerialInterface([])
