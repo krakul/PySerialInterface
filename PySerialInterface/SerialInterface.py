@@ -271,6 +271,6 @@ class SerialInterface(Thread):
                     self.__event_to_log(err)
                     return err
             else:
-                return CLIResponseMessage(content="")
+                return EmptyMessage()
         else:
             return SerialNotConnected(timestamp=time.time())
