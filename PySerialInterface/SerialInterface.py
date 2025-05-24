@@ -16,7 +16,7 @@ from serial import Serial, SerialException
 @dataclass_json
 @dataclass
 class Event:
-    timestamp: float = 0.0
+    timestamp: float = time.time()
 
 
 @dataclass_json
@@ -29,6 +29,12 @@ class CLIResponseMessage(Event):
 @dataclass
 class InvalidMessage(Event):
     content: str = ""
+    error: str = None
+
+
+@dataclass_json
+@dataclass
+class EmptyMessage(Event):
     error: str = None
 
 
@@ -96,6 +102,9 @@ class SerialInterface(Thread):
     def is_connected(self) -> bool:
         return self.__connected
 
+    def is_stopped(self):
+        return self.__is_stopped
+
     def stop(self):
         self.__logger.info("Stop called!")
         self.__is_stopped = True
@@ -120,7 +129,7 @@ class SerialInterface(Thread):
                                    f"baudrate {self.__serial.baudrate} and timeout {self.__serial.timeout}")
 
                 # Create event
-                conn = SerialConnected(timestamp=time.time(), port=port)
+                conn = SerialConnected(port=port)
                 self.__event_to_log(conn)
                 return True
             except SerialException as e:
@@ -131,68 +140,76 @@ class SerialInterface(Thread):
     def __event_to_log(self, event: Event, level=logging.INFO):
         self.__logger.log(level, f"{event}")
 
-    # Parse message
     @staticmethod
-    def parse_message(text) -> Event:
+    def cut_line_end_characters(line):
+        # Cut the new line character
+        if line[-1] == 0x0a:
+            if len(line[:-1]) == 0:
+                msg = InvalidMessage(content=line, error="Msg only 0x0a")
+                return msg
+            line = line[:-1]
+
+        if line[-1] == 0x0d:
+            if len(line[:-1]) == 0:
+                msg = InvalidMessage(content=line, error="Msg only 0x0d")
+                return msg
+            line = line[:-1]
+            if line[-1] == 0x0d:
+                if len(line[:-1]) == 0:
+                    msg = InvalidMessage(content=line, error="Msg only 0x0d")
+                    return msg
+                line = line[:-1]
+        return line
+
+    @staticmethod
+    def check_valid_ascii(line) -> bool:
+        # Check that bytes are valid ASCII characters
+        for b in line:
+            if b < 0x20 or b > 0x7E:
+                return False
+        return True
+
+    @staticmethod
+    def parse_message(line) -> Event:
+        if line is None or len(line) == 0:
+            return EmptyMessage(error="Empty line")
+        line = SerialInterface.cut_line_end_characters(line)
+        if isinstance(line, InvalidMessage):
+            return line
+
+        if SerialInterface.check_valid_ascii(line) is False:
+            msg = InvalidMessage(content=line, error="Illegal character(s)")
+            return msg
+
+        # Try to decode line as ASCII
+        try:
+            line = line.decode('ascii')
+        except UnicodeDecodeError as e:
+            msg = InvalidMessage(content=line.hex('-'), error=f"Not ASCII: {e}")
+            return msg
 
         # Strip trailing whitespaces
-        text = text.rstrip()
+        line = line.rstrip()
 
         # Make sure text is not empty
-        if not text:
-            return InvalidMessage(timestamp=time.time(), content=text, error="Empty line")
+        if not line:
+            return EmptyMessage(error="Empty line")
 
         # Get content behind prefix
-        if len(text) > 1:
-            content = text.lstrip()
+        if len(line) > 1:
+            content = line.lstrip()
         else:
             content = ''
 
-        return CLIResponseMessage(timestamp=time.time(), content=content)
+        return CLIResponseMessage(content=content)
 
     # Read message
     # Return None if timeout
     def __read_message(self) -> Union[Event, None]:
-
         # Read line bytes - note that it can time out
         line = self.__serial.read_until(b'\r')
-
-        # Got line ?
         if line:
-            # Cut the new line character
-            if line[-1] == 0x0a:
-                line = line[:-1]
-                if len(line) == 0:
-                    msg = InvalidMessage(timestamp=time.time(), content=line.hex('-'), error="Msg only 0x0a")
-                    return msg
-
-            if line[-1] == 0x0d:
-                line = line[:-1]
-                if len(line) == 0:
-                    msg = InvalidMessage(timestamp=time.time(), content=line.hex('-'), error="Msg only 0x0d")
-                    return msg
-                if line[-1] == 0x0d:
-                    line = line[:-1]
-                if len(line) == 0:
-                    msg = InvalidMessage(timestamp=time.time(), content=line.hex('-'), error="Msg only 0x0d")
-                    return msg
-
-            # Check that bytes are valid ASCII characters
-            for b in line:
-                if b < 0x20 or b > 0x7E:
-                    msg = InvalidMessage(timestamp=time.time(), content=line.hex('-'), error="Illegal character(s)")
-                    self.__event_to_log(msg)
-                    return msg
-
-            # Try to decode line as ASCII
-            try:
-                text = line.decode('ascii')
-            except UnicodeDecodeError as e:
-                msg = InvalidMessage(timestamp=time.time(), content=line.hex('-'), error=f"Not ASCII: {e}")
-                self.__event_to_log(msg)
-                return msg
-
-            msg = self.parse_message(text)
+            msg = self.parse_message(line)
             return msg
 
         return None
@@ -222,12 +239,12 @@ class SerialInterface(Thread):
         return msg
 
     # Handle serial request
-    def __handle_serial_request(self, req, required_resp_start, resp_type, timeout):
+    def __handle_serial_request(self, req, required_resp_start, resp_type, timeout: float, retry_cnt: int):
         if req is None:
             return self.__wait_for_response(required_resp_start, resp_type, timeout)
         else:
-            # Try to send request up to 3 times
-            for trial in range(3):
+            # Try to send request up to x times
+            for trial in range(retry_cnt):
                 # Send the request
                 self.__serial.write(bytes(req + '\n', 'ascii'))
 
@@ -245,7 +262,7 @@ class SerialInterface(Thread):
                     return msg
 
             # We have timeout
-            msg = ResponseTimeout(timestamp=time.time(), request=req)
+            msg = ResponseTimeout(request=req)
             self.__event_to_log(msg)
             return msg
 
@@ -259,8 +276,8 @@ class SerialInterface(Thread):
             return
         try:
             queue_item = self.__request_queue.get(block=False)
-            req, required_resp_start, resp_type, timeout = queue_item
-            resp = self.__handle_serial_request(req, required_resp_start, resp_type, timeout)
+            req, required_resp_start, resp_type, timeout, retry_cnt = queue_item
+            resp = self.__handle_serial_request(req, required_resp_start, resp_type, timeout, retry_cnt)
             if resp:
                 self.__response_queue.put(resp)
         except QueueEmpty:
@@ -268,7 +285,7 @@ class SerialInterface(Thread):
             self.__logger.warning("QueueEmpty exception caught unexpectedly.")
 
     def __handle_connection_lost(self, err):
-        conn = SerialConnectionLost(timestamp=time.time(), reason=str(err))
+        conn = SerialConnectionLost(reason=str(err))
         self.__event_to_log(conn)
         try:
             self.__serial.close()
@@ -317,19 +334,20 @@ class SerialInterface(Thread):
                         pass
 
     # Queue request and wait for response (up to 10 seconds)
-    def queue_request_wait_response(self, req, required_resp_start, resp_type=CLIResponseMessage, timeout=1.5):
+    def queue_request_wait_response(self, req, required_resp_start, resp_type=CLIResponseMessage,
+                                    timeout=1.5, retry_cnt=1):
         if self.__connected:
-            self.__request_queue.put((req, required_resp_start, resp_type, timeout))
+            self.__request_queue.put((req, required_resp_start, resp_type, timeout, retry_cnt))
             if required_resp_start is not None:
                 try:
                     # Timeout has to 3 x each request timeout + some more
-                    return self.__response_queue.get(block=True, timeout=timeout + 10.0)
+                    return self.__response_queue.get(block=True, timeout=timeout * retry_cnt + 5.0)
                 except Empty:
                     # It should not happen, but don't crash.
-                    err = RequestHandlerTimeout(timestamp=time.time(), request=req)
+                    err = RequestHandlerTimeout(request=req)
                     self.__event_to_log(err)
                     return err
             else:
-                return CLIResponseMessage(timestamp=time.time(), content="")
+                return CLIResponseMessage(content="")
         else:
             return SerialNotConnected(timestamp=time.time())
