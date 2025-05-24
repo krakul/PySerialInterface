@@ -11,31 +11,7 @@ from queue import Queue, Empty
 from threading import Thread
 from dataclasses_json import dataclass_json
 from serial import Serial, SerialException
-
-
-@dataclass_json
-@dataclass
-class Event:
-    timestamp: float = time.time()
-
-
-@dataclass_json
-@dataclass
-class CLIResponseMessage(Event):
-    content: str = ""
-
-
-@dataclass_json
-@dataclass
-class InvalidMessage(Event):
-    content: str = ""
-    error: str = None
-
-
-@dataclass_json
-@dataclass
-class EmptyMessage(Event):
-    error: str = None
+from PySerialInterface.SerialRequest import Event, CLIResponseMessage, SerialRequest
 
 
 @dataclass_json
@@ -76,7 +52,8 @@ class SerialInterface(Thread):
     # Fields
     __serial: Union[Serial, None] = None
     __serial_list: List[str]
-    __is_stopped: bool = False
+    __is_stop_requested: bool = False
+    __is_thread_running: bool = False
     __is_force_reconnect_requested: bool = False
     __connected: bool = False
     __request_queue: Queue = Queue()
@@ -91,6 +68,8 @@ class SerialInterface(Thread):
         else:
             self.__logger = logger
 
+        self.__logger.info("Initializing SerialInterface with ports: %s", port_list)
+
         # Construct fields
         self.__baudrate = baudrate
         self.__serial_list = port_list
@@ -99,15 +78,20 @@ class SerialInterface(Thread):
     def get_serial(self):
         return self.__serial
 
+    def __set_connected(self, connected: bool):
+        if self.__connected != connected:
+            self.__logger.info(f"Connection status changed: {self.__connected} -> {connected}")
+            self.__connected = connected
+
     def is_connected(self) -> bool:
         return self.__connected
 
-    def is_stopped(self):
-        return self.__is_stopped
+    def is_running(self):
+        return self.__is_thread_running
 
     def stop(self):
         self.__logger.info("Stop called!")
-        self.__is_stopped = True
+        self.__is_stop_requested = True
 
     def force_reconnect(self):
         self.__logger.info("Force reconnect requested!")
@@ -115,7 +99,7 @@ class SerialInterface(Thread):
 
     # Connect to first available serial interface
     def __connect(self):
-        self.__connected = False
+        self.__set_connected(False)
         self.__is_force_reconnect_requested = False
         # Reset previous serial interface
         self.__serial = None
@@ -140,76 +124,13 @@ class SerialInterface(Thread):
     def __event_to_log(self, event: Event, level=logging.INFO):
         self.__logger.log(level, f"{event}")
 
-    @staticmethod
-    def cut_line_end_characters(line):
-        # Cut the new line character
-        if line[-1] == 0x0a:
-            if len(line[:-1]) == 0:
-                msg = InvalidMessage(content=line, error="Msg only 0x0a")
-                return msg
-            line = line[:-1]
-
-        if line[-1] == 0x0d:
-            if len(line[:-1]) == 0:
-                msg = InvalidMessage(content=line, error="Msg only 0x0d")
-                return msg
-            line = line[:-1]
-            if line[-1] == 0x0d:
-                if len(line[:-1]) == 0:
-                    msg = InvalidMessage(content=line, error="Msg only 0x0d")
-                    return msg
-                line = line[:-1]
-        return line
-
-    @staticmethod
-    def check_valid_ascii(line) -> bool:
-        # Check that bytes are valid ASCII characters
-        for b in line:
-            if b < 0x20 or b > 0x7E:
-                return False
-        return True
-
-    @staticmethod
-    def parse_message(line) -> Event:
-        if line is None or len(line) == 0:
-            return EmptyMessage(error="Empty line")
-        line = SerialInterface.cut_line_end_characters(line)
-        if isinstance(line, InvalidMessage):
-            return line
-
-        if SerialInterface.check_valid_ascii(line) is False:
-            msg = InvalidMessage(content=line, error="Illegal character(s)")
-            return msg
-
-        # Try to decode line as ASCII
-        try:
-            line = line.decode('ascii')
-        except UnicodeDecodeError as e:
-            msg = InvalidMessage(content=line.hex('-'), error=f"Not ASCII: {e}")
-            return msg
-
-        # Strip trailing whitespaces
-        line = line.rstrip()
-
-        # Make sure text is not empty
-        if not line:
-            return EmptyMessage(error="Empty line")
-
-        # Get content behind prefix
-        if len(line) > 1:
-            content = line.lstrip()
-        else:
-            content = ''
-
-        return CLIResponseMessage(content=content)
-
     # Read message
     # Return None if timeout
     def __read_message(self) -> Union[Event, None]:
         # Read line bytes - note that it can time out
         line = self.__serial.read_until(b'\r')
         if line:
-            msg = self.parse_message(line)
+            msg = SerialRequest.parse_message(line)
             return msg
 
         return None
@@ -239,22 +160,23 @@ class SerialInterface(Thread):
         return msg
 
     # Handle serial request
-    def __handle_serial_request(self, req, required_resp_start, resp_type, timeout: float, retry_cnt: int):
-        if req is None:
-            return self.__wait_for_response(required_resp_start, resp_type, timeout)
+    def __handle_serial_request(self, request: SerialRequest):
+        if request.msg_out is None:
+            return self.__wait_for_response(request.required_resp_start, request.required_resp_type, request.timeout)
         else:
             # Try to send request up to x times
-            for trial in range(retry_cnt):
+            for trial in range(request.retry_cnt):
                 # Send the request
-                self.__serial.write(bytes(req + '\n', 'ascii'))
+                self.__serial.write(bytes(request.msg_out + '\n', 'ascii'))
 
                 # Make sure message goes out
                 self.__serial.flush()
 
-                if required_resp_start is None:
+                if request.required_resp_start is None:
                     return None
 
-                msg = self.__wait_for_response(required_resp_start, resp_type, timeout=timeout)
+                msg = self.__wait_for_response(request.required_resp_start, request.required_resp_type,
+                                               timeout=request.timeout)
 
                 if isinstance(msg, ResponseTimeout):
                     continue
@@ -262,7 +184,7 @@ class SerialInterface(Thread):
                     return msg
 
             # We have timeout
-            msg = ResponseTimeout(request=req)
+            msg = ResponseTimeout(request=request.msg_out)
             self.__event_to_log(msg)
             return msg
 
@@ -275,9 +197,8 @@ class SerialInterface(Thread):
         if self.__request_queue.empty():
             return
         try:
-            queue_item = self.__request_queue.get(block=False)
-            req, required_resp_start, resp_type, timeout, retry_cnt = queue_item
-            resp = self.__handle_serial_request(req, required_resp_start, resp_type, timeout, retry_cnt)
+            request: SerialRequest = self.__request_queue.get(block=False)
+            resp = self.__handle_serial_request(request)
             if resp:
                 self.__response_queue.put(resp)
         except QueueEmpty:
@@ -295,7 +216,7 @@ class SerialInterface(Thread):
     def __main_loop(self):
         err = None
         try:
-            while self.__is_stopped is False and self.__is_force_reconnect_requested is False:
+            while self.__is_stop_requested is False and self.__is_force_reconnect_requested is False:
                 if not self.__request_queue.empty():
                     self.__process_request_queue()
                 else:
@@ -310,13 +231,14 @@ class SerialInterface(Thread):
 
     # Thread entry function
     def run(self):
-        while self.__is_stopped is False:
+        self.__is_thread_running = True
+        while self.__is_stop_requested is False:
 
             # If connection succeeds, go to main loop
             if self.__connect():
-                self.__connected = True
+                self.__set_connected(True)
                 self.__main_loop()
-            self.__connected = False
+            self.__set_connected(False)
 
             # Idle for 3 seconds before reconnecting.
             # But handle pending requests also meanwhile, otherwise they queue up...
@@ -332,12 +254,15 @@ class SerialInterface(Thread):
                         self.__response_queue.put(conn)
                     except QueueEmpty:
                         pass
+        self.__is_thread_running = False
+        self.__logger.info("SerialRequestHandler thread stopped.")
 
     # Queue request and wait for response (up to 10 seconds)
     def queue_request_wait_response(self, req, required_resp_start, resp_type=CLIResponseMessage,
                                     timeout=1.5, retry_cnt=1):
         if self.__connected:
-            self.__request_queue.put((req, required_resp_start, resp_type, timeout, retry_cnt))
+            request = SerialRequest(req, required_resp_start, resp_type, timeout, retry_cnt)
+            self.__request_queue.put(request)
             if required_resp_start is not None:
                 try:
                     # Timeout has to 3 x each request timeout + some more
