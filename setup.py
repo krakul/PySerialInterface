@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name='PySerialInterface',
-    version='v0.0.1',
+    version='v1.0.0',
     description='SerialInterface script to communicate with devices over UART',
     long_description=long_description,
     long_description_content_type="text/markdown",
