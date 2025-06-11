@@ -62,7 +62,8 @@ class SerialInterface(Thread):
     __response_queue: Queue = Queue()
 
     # Constructor
-    def __init__(self, port_list: Union[List[str], str], baudrate=115200, timeout=0.1, logger=None, received_msg_cb=None):
+    def __init__(self, port_list: Union[List[str], str], baudrate=115200, timeout=0.1, logger=None,
+                 received_msg_cb=None, msg_end_identifier=b'\n'):
         super().__init__(daemon=True)
 
         if isinstance(port_list, str):
@@ -81,6 +82,7 @@ class SerialInterface(Thread):
         self.__serial_list = port_list
         self.__timeout: float = timeout
         self.__received_msg_cb = received_msg_cb
+        self.__msg_end_identifier = msg_end_identifier
 
     def get_serial(self):
         return self.__serial
@@ -135,7 +137,7 @@ class SerialInterface(Thread):
     # Return None if timeout
     def __read_message(self) -> Union[Event, None]:
         # Read line bytes - note that it can time out
-        line = self.__serial.read_until(b'\r')
+        line = self.__serial.read_until(self.__msg_end_identifier)
         if line:
             msg = SerialRequest.parse_message(line)
             if not isinstance(msg, EmptyMessage):
@@ -178,7 +180,7 @@ class SerialInterface(Thread):
             # Try to send request up to x times
             for trial in range(request.retry_cnt):
                 # Send the request
-                self.__serial.write(bytes(request.msg_out + '\n', 'ascii'))
+                self.__serial.write(bytes(request.msg_out, 'ascii') + self.__msg_end_identifier)
 
                 # Make sure message goes out
                 self.__serial.flush()
