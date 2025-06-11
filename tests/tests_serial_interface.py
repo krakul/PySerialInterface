@@ -59,6 +59,22 @@ class TestSerialInterface(unittest.TestCase):
         self.assertIsNone(self.si.get_serial())
 
     @patch("PySerialInterface.SerialInterface.Serial")
+    def test_connect_success_single_port(self, mock_serial_class):
+        mock_serial_class.return_value = self.mock_serial_instance
+
+        self.si = SerialInterface("COM1")
+        self.si.start()
+
+        time.sleep(1)  # give time for serial connection to establish
+
+        connected = self.si.is_connected()
+
+        # Assertions
+        self.assertTrue(connected)
+        self.assertIsNotNone(self.si.get_serial())
+        mock_serial_class.assert_called_with(port="COM1", baudrate=115200, timeout=0.1)
+
+    @patch("PySerialInterface.SerialInterface.Serial")
     def test_connect_success(self, mock_serial_class):
         mock_serial_class.return_value = self.mock_serial_instance
 

@@ -62,8 +62,12 @@ class SerialInterface(Thread):
     __response_queue: Queue = Queue()
 
     # Constructor
-    def __init__(self, port_list: List[str], baudrate=115200, timeout=0.1, logger=None, received_msg_cb=None):
+    def __init__(self, port_list: Union[List[str], str], baudrate=115200, timeout=0.1, logger=None, received_msg_cb=None):
         super().__init__(daemon=True)
+
+        if isinstance(port_list, str):
+            # If single port is given, convert to list
+            port_list = [port_list]
 
         if logger is None:
             self.__logger = getLogger(self.__class__.__name__)
