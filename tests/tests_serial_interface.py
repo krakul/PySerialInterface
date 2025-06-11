@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 import unittest
 from unittest.mock import MagicMock, patch
 from serial import SerialException

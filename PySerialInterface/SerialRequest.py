@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 from dataclasses_json import dataclass_json
 from dataclasses import dataclass
 from typing import Union
