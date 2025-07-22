@@ -73,15 +73,23 @@ class SerialInterface(Thread):
         if logger is None:
             self.__logger = getLogger(self.__class__.__name__)
             self.__log_fn = self.__python_log
-        elif hasattr(logger, 'log') and 'LoggingSeverity' in str(type(logger.log)):
-            # Likely rclpy logger
-            self.__logger = logger
-            self.__log_fn = self.__ros_log
+        elif hasattr(logger, "log") and isinstance(logger.log.__self__, type(logger)):
+            # Better: check if it's rclpy by importing the type
+            try:
+                from rclpy.impl.rcutils_logger import RcutilsLogger
+                if isinstance(logger, RcutilsLogger):
+                    self.__logger = logger
+                    self.__log_fn = self.__ros_log
+                else:
+                    self.__logger = logger
+                    self.__log_fn = self.__python_log
+            except ImportError:
+                self.__logger = logger
+                self.__log_fn = self.__python_log
         else:
-            # Assume standard logger if nothing else
-            self.__logger = logger
+            # If broken logger is provided, use default Python logger
+            self.__logger = getLogger(self.__class__.__name__)
             self.__log_fn = self.__python_log
-
         self.__logger.info(f"Initializing SerialInterface with ports: {port_list}")
 
         # Construct fields
