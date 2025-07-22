@@ -90,7 +90,7 @@ class SerialInterface(Thread):
             # If broken logger is provided, use default Python logger
             self.__logger = getLogger(self.__class__.__name__)
             self.__log_fn = self.__python_log
-        self.__logger.info(f"Initializing SerialInterface with ports: {port_list}")
+        self.__logger.info(f"Initializing SerialInterface with ports: {port_list}, using logger: {'ros_logger' if self.__log_fn == self.__ros_log else 'python_logger'}")
 
         # Construct fields
         self.__baudrate = baudrate
