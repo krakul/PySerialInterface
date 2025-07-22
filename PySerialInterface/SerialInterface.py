@@ -75,7 +75,7 @@ class SerialInterface(Thread):
         else:
             self.__logger = logger
 
-        self.__logger.info("Initializing SerialInterface with ports: %s", port_list)
+        self.__logger.info(f"Initializing SerialInterface with ports: {port_list}")
 
         # Construct fields
         self.__baudrate = baudrate
