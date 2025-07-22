@@ -142,7 +142,7 @@ class SerialInterface(Thread):
                                        f"baudrate {self.__serial.baudrate} and timeout {self.__serial.timeout}")
                 # Create event
                 conn = SerialConnected(port=port)
-                self.__event_to_log(conn)
+                self.__event_to_log(event=conn)
                 return True
             except SerialException as e:
                 self.__logger.error(f"{e}")
@@ -192,7 +192,7 @@ class SerialInterface(Thread):
         if line:
             msg = SerialRequest.parse_message(line)
             if not isinstance(msg, EmptyMessage):
-                self.__event_to_log(msg, level=logging.DEBUG)
+                self.__event_to_log(event=msg, level=logging.DEBUG)
                 # If we have received message callback, call it
                 if self.__received_msg_cb is not None:
                     self.__received_msg_cb(msg)
@@ -220,7 +220,7 @@ class SerialInterface(Thread):
 
         # We have timeout
         msg = ResponseTimeout(timestamp=time.time())
-        self.__event_to_log(msg)
+        self.__event_to_log(event=msg)
         return msg
 
     # Handle serial request
@@ -249,7 +249,7 @@ class SerialInterface(Thread):
 
             # We have timeout
             msg = ResponseTimeout(request=request.msg_out)
-            self.__event_to_log(msg)
+            self.__event_to_log(event=msg)
             return msg
 
     def __process_request_queue(self):
@@ -264,7 +264,7 @@ class SerialInterface(Thread):
 
     def __handle_connection_lost(self, err):
         conn = SerialConnectionLost(reason=str(err))
-        self.__event_to_log(conn)
+        self.__event_to_log(event=conn)
         try:
             self.__serial.close()
         except Exception as close_err:
@@ -307,7 +307,7 @@ class SerialInterface(Thread):
                     try:
                         self.__request_queue.get(block=False, timeout=None)
                         conn = SerialNotConnected(timestamp=time.time())
-                        self.__event_to_log(conn)
+                        self.__event_to_log(event=conn)
                         self.__response_queue.put(conn)
                     except QueueEmpty:
                         pass
@@ -327,7 +327,7 @@ class SerialInterface(Thread):
                 except Empty:
                     # It should not happen, but don't crash.
                     err = RequestHandlerTimeout(request=req)
-                    self.__event_to_log(err)
+                    self.__event_to_log(event=err)
                     return err
             else:
                 return EmptyMessage()
