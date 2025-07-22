@@ -178,7 +178,7 @@ class SerialInterface(Thread):
             }
             level = py_to_ros.get(level, LoggingSeverity.INFO)
 
-        self.__logger.log(level, msg)
+        self.__logger.log(msg, level)
 
     # Append event to log
     def __event_to_log(self, event: Event, level=logging.INFO):
