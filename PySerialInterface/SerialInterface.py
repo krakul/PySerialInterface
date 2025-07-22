@@ -117,10 +117,14 @@ class SerialInterface(Thread):
         for port in self.__serial_list:
             try:
                 # Try to open port
-                self.__serial = Serial(port=port, baudrate=self.__baudrate, timeout=self.__timeout)
-                self.__logger.info(f"UART connection opened on port {self.__serial.port} with " +
-                                   f"baudrate {self.__serial.baudrate} and timeout {self.__serial.timeout}")
-
+                if port.startswith("socket://"):
+                    self.__serial = Serial(port=port, timeout=self.__timeout)  # baudrate is ignored for socket
+                    self.__logger.info(f"Socket serial connection opened on port {self.__serial.port} with " +
+                                       f"timeout {self.__serial.timeout}")
+                else:
+                    self.__serial = Serial(port=port, baudrate=self.__baudrate, timeout=self.__timeout)
+                    self.__logger.info(f"UART connection opened on port {self.__serial.port} with " +
+                                       f"baudrate {self.__serial.baudrate} and timeout {self.__serial.timeout}")
                 # Create event
                 conn = SerialConnected(port=port)
                 self.__event_to_log(conn)
