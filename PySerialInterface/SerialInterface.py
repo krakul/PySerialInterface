@@ -72,8 +72,15 @@ class SerialInterface(Thread):
 
         if logger is None:
             self.__logger = getLogger(self.__class__.__name__)
-        else:
+            self.__log_fn = self.__python_log
+        elif hasattr(logger, 'log') and 'LoggingSeverity' in str(type(logger.log)):
+            # Likely rclpy logger
             self.__logger = logger
+            self.__log_fn = self.__ros_log
+        else:
+            # Assume standard logger if nothing else
+            self.__logger = logger
+            self.__log_fn = self.__python_log
 
         self.__logger.info(f"Initializing SerialInterface with ports: {port_list}")
 
@@ -147,9 +154,27 @@ class SerialInterface(Thread):
             self.__logger.warning("Cannot change baudrate, serial interface is not connected.")
             return False
 
+    def __python_log(self, level, msg):
+        self.__logger.log(level, msg)
+
+    def __ros_log(self, level, msg):
+        if isinstance(level, int):
+            # Optional: map Python logging levels to ROS if needed
+            from rclpy.logging import LoggingSeverity
+            py_to_ros = {
+                logging.DEBUG: LoggingSeverity.DEBUG,
+                logging.INFO: LoggingSeverity.INFO,
+                logging.WARNING: LoggingSeverity.WARN,
+                logging.ERROR: LoggingSeverity.ERROR,
+                logging.CRITICAL: LoggingSeverity.FATAL,
+            }
+            level = py_to_ros.get(level, LoggingSeverity.INFO)
+
+        self.__logger.log(level, msg)
+
     # Append event to log
     def __event_to_log(self, event: Event, level=logging.INFO):
-        self.__logger.log(level, f"{event}")
+        self.__log_fn(level, f"{event}")
 
     # Read message
     # Return None if timeout
@@ -159,7 +184,7 @@ class SerialInterface(Thread):
         if line:
             msg = SerialRequest.parse_message(line)
             if not isinstance(msg, EmptyMessage):
-                self.__event_to_log(msg, logging.DEBUG)
+                self.__event_to_log(msg, level=logging.DEBUG)
                 # If we have received message callback, call it
                 if self.__received_msg_cb is not None:
                     self.__received_msg_cb(msg)
