@@ -166,19 +166,16 @@ class SerialInterface(Thread):
         self.__logger.log(level, msg)
 
     def __ros_log(self, level, msg):
-        if isinstance(level, int):
-            # Optional: map Python logging levels to ROS if needed
-            from rclpy.logging import LoggingSeverity
-            py_to_ros = {
-                logging.DEBUG: LoggingSeverity.DEBUG,
-                logging.INFO: LoggingSeverity.INFO,
-                logging.WARNING: LoggingSeverity.WARN,
-                logging.ERROR: LoggingSeverity.ERROR,
-                logging.CRITICAL: LoggingSeverity.FATAL,
-            }
-            level = py_to_ros.get(level, LoggingSeverity.INFO)
-
-        self.__logger.log(msg, level)
+        if level == logging.DEBUG:
+            self.__logger.debug(msg)
+        elif level == logging.INFO:
+            self.__logger.info(msg)
+        elif level == logging.WARNING:
+            self.__logger.warning(msg)
+        elif level == logging.ERROR:
+            self.__logger.error(msg)
+        else:
+            self.__logger.info(msg)
 
     # Append event to log
     def __event_to_log(self, event: Event, level=logging.INFO):
