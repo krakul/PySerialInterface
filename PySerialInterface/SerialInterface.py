@@ -133,6 +133,20 @@ class SerialInterface(Thread):
                 self.__logger.error(f"{e}")
         return False
 
+    def change_baudrate(self, new_baudrate: int) -> bool:
+        if self.__serial is not None:
+            try:
+                self.__baudrate = new_baudrate
+                self.__serial.baudrate = new_baudrate
+                self.__logger.info(f"Baudrate changed to {new_baudrate} on port {self.__serial.port}")
+                return True
+            except SerialException as e:
+                self.__logger.error(f"Failed to change baudrate: {e}")
+                return False
+        else:
+            self.__logger.warning("Cannot change baudrate, serial interface is not connected.")
+            return False
+
     # Append event to log
     def __event_to_log(self, event: Event, level=logging.INFO):
         self.__logger.log(level, f"{event}")
