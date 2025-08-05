@@ -12,7 +12,7 @@ from typing import Union, List
 from queue import Queue, Empty
 from threading import Thread
 from dataclasses_json import dataclass_json
-from serial import Serial, SerialException
+from serial import Serial, SerialException, serial_for_url
 from PySerialInterface.SerialRequest import Event, CLIResponseMessage, SerialRequest, EmptyMessage
 
 
@@ -133,13 +133,14 @@ class SerialInterface(Thread):
             try:
                 # Try to open port
                 if port.startswith("socket://"):
-                    self.__serial = Serial(port=port, timeout=self.__timeout)  # baudrate is ignored for socket
+                    self.__serial = serial_for_url(port, timeout=self.__timeout)
                     self.__logger.info(f"Socket serial connection opened on port {self.__serial.port} with " +
                                        f"timeout {self.__serial.timeout}")
                 else:
                     self.__serial = Serial(port=port, baudrate=self.__baudrate, timeout=self.__timeout)
                     self.__logger.info(f"UART connection opened on port {self.__serial.port} with " +
                                        f"baudrate {self.__serial.baudrate} and timeout {self.__serial.timeout}")
+                self.__logger.info(f"Serial object type: {type(self.__serial)}")
                 # Create event
                 conn = SerialConnected(port=port)
                 self.__event_to_log(event=conn)
