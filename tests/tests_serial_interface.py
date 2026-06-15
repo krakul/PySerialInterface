@@ -11,13 +11,14 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 
-def mock_read_until(msg: str):
+def mock_read_until(msg: str, serial_timeout: float = 0.1):
     count = 0
     while True:
         count += 1
         if count % 10 == 0:
             yield msg.encode('utf-8') + b"\r\n"
         else:
+            time.sleep(serial_timeout)  # mimic real read_until blocking until timeout
             yield b""
 
 
@@ -286,6 +287,184 @@ class TestSerialInterface(unittest.TestCase):
         self.si = SerialInterface([])
         response = self.si.queue_request_wait_response("AT", "OK")
         self.assertIsInstance(response, SerialNotConnected)
+
+    @patch("PySerialInterface.SerialInterface.Serial")
+    def test_multiline_response_success(self, mock_serial_class):
+        # Simulate: echo of command, two data lines, then the shell prompt.
+        # Returns empty bytes until write() is called, then serves the response sequence.
+        responses_after_write = [
+            b"uart:~$ biks info\r\n",
+            b"field1: value1\r\n",
+            b"field2: value2\r\n",
+            b"uart:~$ \r\n",
+        ]
+        state = {"written": False, "index": 0}
+
+        def read_until_side_effect(*args, **kwargs):
+            if not state["written"]:
+                return b""
+            i = state["index"]
+            if i < len(responses_after_write):
+                state["index"] += 1
+                return responses_after_write[i]
+            return b""
+
+        def write_side_effect(data):
+            state["written"] = True
+
+        self.mock_serial_instance.read_until.side_effect = read_until_side_effect
+        self.mock_serial_instance.write.side_effect = write_side_effect
+        mock_serial_class.return_value = self.mock_serial_instance
+        self.si = SerialInterface(["COM1"])
+        self.si.start()
+        time.sleep(1)
+
+        result = self.si.queue_request_wait_multiline_response(
+            req="biks info",
+            required_resp_start="uart:~$ biks info",
+            terminator="uart:~$",
+            timeout=3.0
+        )
+
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0].content, "uart:~$ biks info")
+        self.assertEqual(result[1].content, "field1: value1")
+        self.assertEqual(result[2].content, "field2: value2")
+
+    @patch("PySerialInterface.SerialInterface.Serial")
+    def test_multiline_response_timeout(self, mock_serial_class):
+        # Never produces the terminator line — should return ResponseTimeout.
+        responses_after_write = [
+            b"uart:~$ biks info\r\n",
+            b"field1: value1\r\n",
+        ]
+        state = {"written": False, "index": 0}
+
+        def read_until_side_effect(*args, **kwargs):
+            if not state["written"]:
+                return b""
+            i = state["index"]
+            if i < len(responses_after_write):
+                state["index"] += 1
+                return responses_after_write[i]
+            return b""
+
+        def write_side_effect(data):
+            state["written"] = True
+
+        self.mock_serial_instance.read_until.side_effect = read_until_side_effect
+        self.mock_serial_instance.write.side_effect = write_side_effect
+        mock_serial_class.return_value = self.mock_serial_instance
+        self.si = SerialInterface(["COM1"])
+        self.si.start()
+        time.sleep(1)
+
+        result = self.si.queue_request_wait_multiline_response(
+            req="biks info",
+            required_resp_start="uart:~$ biks info",
+            terminator="uart:~$",
+            timeout=0.5
+        )
+
+        self.assertIsInstance(result, ResponseTimeout)
+
+    @patch("PySerialInterface.SerialInterface.Serial")
+    def test_multiline_response_ignores_lines_before_echo(self, mock_serial_class):
+        # Background noise lines arrive after write but before the command echo; they should be ignored.
+        responses_after_write = [
+            b"some background noise\r\n",
+            b"more noise\r\n",
+            b"uart:~$ biks info\r\n",
+            b"field1: value1\r\n",
+            b"uart:~$ \r\n",
+        ]
+        state = {"written": False, "index": 0}
+
+        def read_until_side_effect(*args, **kwargs):
+            if not state["written"]:
+                return b""
+            i = state["index"]
+            if i < len(responses_after_write):
+                state["index"] += 1
+                return responses_after_write[i]
+            return b""
+
+        def write_side_effect(data):
+            state["written"] = True
+
+        self.mock_serial_instance.read_until.side_effect = read_until_side_effect
+        self.mock_serial_instance.write.side_effect = write_side_effect
+        mock_serial_class.return_value = self.mock_serial_instance
+        self.si = SerialInterface(["COM1"])
+        self.si.start()
+        time.sleep(1)
+
+        result = self.si.queue_request_wait_multiline_response(
+            req="biks info",
+            required_resp_start="uart:~$ biks info",
+            terminator="uart:~$",
+            timeout=3.0
+        )
+
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].content, "uart:~$ biks info")
+        self.assertEqual(result[1].content, "field1: value1")
+
+    @patch("PySerialInterface.SerialInterface.Serial")
+    def test_multiline_response_retry_cnt(self, mock_serial_class):
+        # Each attempt returns the echo but never the terminator, forcing retries.
+        # After write() is called, serve one echo + one data line, then exhaust — no terminator.
+        state = {"write_count": 0, "read_index": 0}
+        # First read after write gives the echo; subsequent reads give a data line — never the terminator.
+        per_attempt = [
+            b"uart:~$ biks info\r\n",  # echo (index 0)
+            b"field1: value1\r\n",      # data (index 1+, cycles)
+        ]
+
+        def read_until_side_effect(*args, **kwargs):
+            if state["write_count"] == 0:
+                return b""
+            i = min(state["read_index"], 1)  # stay on data line after echo
+            state["read_index"] += 1
+            return per_attempt[i]
+
+        def write_side_effect(data):
+            state["write_count"] += 1
+            state["read_index"] = 0  # reset reads for each retry
+
+        self.mock_serial_instance.read_until.side_effect = read_until_side_effect
+        self.mock_serial_instance.write.side_effect = write_side_effect
+        mock_serial_class.return_value = self.mock_serial_instance
+        self.si = SerialInterface(["COM1"])
+        self.si.start()
+        time.sleep(1)
+
+        timeout = 0.5
+        retry_cnt = 3
+        start_time = time.time()
+        result = self.si.queue_request_wait_multiline_response(
+            req="biks info",
+            required_resp_start="uart:~$ biks info",
+            terminator="uart:~$",
+            timeout=timeout,
+            retry_cnt=retry_cnt
+        )
+        elapsed = time.time() - start_time
+
+        self.assertIsInstance(result, ResponseTimeout)
+        self.assertEqual(self.mock_serial_instance.write.call_count, retry_cnt)
+        self.assertGreaterEqual(elapsed, timeout * retry_cnt)
+
+    def test_multiline_response_not_connected(self):
+        self.si = SerialInterface([])
+        result = self.si.queue_request_wait_multiline_response(
+            req="biks info",
+            required_resp_start="uart:~$ biks info",
+            terminator="uart:~$"
+        )
+        self.assertIsInstance(result, SerialNotConnected)
 
 
 if __name__ == '__main__':

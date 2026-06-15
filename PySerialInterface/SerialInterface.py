@@ -90,7 +90,8 @@ class SerialInterface(Thread):
             # If broken logger is provided, use default Python logger
             self.__logger = getLogger(self.__class__.__name__)
             self.__log_fn = self.__python_log
-        self.__logger.info(f"Initializing SerialInterface with ports: {port_list}, using logger: {'ros_logger' if self.__log_fn == self.__ros_log else 'python_logger'}")
+        self.__logger.info(
+            f"Initializing SerialInterface with ports: {port_list}, using logger: {'ros_logger' if self.__log_fn == self.__ros_log else 'python_logger'}")
 
         # Construct fields
         self.__baudrate = baudrate
@@ -221,10 +222,39 @@ class SerialInterface(Thread):
         self.__event_to_log(event=msg)
         return msg
 
+    def __wait_for_multiline_response(
+        self,
+        required_resp_start: str,
+        terminator: str,
+        timeout: float
+    ) -> Union[List[Event], ResponseTimeout]:
+        collected = []
+        timeout_time = time.time() + timeout
+        capturing = False
+        while time.time() < timeout_time:
+            msg = self.__read_message()
+            if msg is None:
+                continue
+            if isinstance(msg, CLIResponseMessage):
+                if not capturing and msg.content.startswith(required_resp_start):
+                    capturing = True
+                    collected.append(msg)
+                    continue
+                if capturing:
+                    if msg.content.startswith(terminator):
+                        return collected
+                    collected.append(msg)
+        return ResponseTimeout(request=required_resp_start)
+
     # Handle serial request
     def __handle_serial_request(self, request: SerialRequest):
         if request.msg_out is None:
-            return self.__wait_for_response(request.required_resp_start, request.required_resp_type, request.timeout)
+            if request.terminator:
+                return self.__wait_for_multiline_response(required_resp_start=request.required_resp_start,
+                                                          terminator=request.terminator, timeout=request.timeout)
+            else:
+                return self.__wait_for_response(request.required_resp_start, request.required_resp_type,
+                                                request.timeout)
         else:
             # Try to send request up to x times
             for trial in range(request.retry_cnt):
@@ -237,13 +267,19 @@ class SerialInterface(Thread):
                 if request.required_resp_start is None:
                     return None
 
-                msg = self.__wait_for_response(request.required_resp_start, request.required_resp_type,
-                                               timeout=request.timeout)
-
-                if isinstance(msg, ResponseTimeout):
-                    continue
+                if request.terminator is not None:
+                    result = self.__wait_for_multiline_response(
+                        request.required_resp_start,
+                        request.terminator,
+                        request.timeout
+                    )
                 else:
-                    return msg
+                    result = self.__wait_for_response(
+                        request.required_resp_start,
+                        request.required_resp_type,
+                        timeout=request.timeout)
+                if not isinstance(result, ResponseTimeout):
+                    return result
 
             # We have timeout
             msg = ResponseTimeout(request=request.msg_out)
@@ -316,7 +352,13 @@ class SerialInterface(Thread):
     def queue_request_wait_response(self, req, required_resp_start, resp_type=CLIResponseMessage,
                                     timeout=1.5, retry_cnt=1):
         if self.__connected:
-            request = SerialRequest(req, required_resp_start, resp_type, timeout, retry_cnt)
+            request = SerialRequest(
+                msg_out=req,
+                required_resp_start=required_resp_start,
+                required_resp_type=resp_type,
+                timeout=timeout,
+                retry_cnt=retry_cnt,
+                terminator=None)
             self.__request_queue.put(request)
             if required_resp_start is not None:
                 try:
@@ -331,3 +373,29 @@ class SerialInterface(Thread):
                 return EmptyMessage()
         else:
             return SerialNotConnected(timestamp=time.time())
+
+    def queue_request_wait_multiline_response(
+        self,
+        req: str,
+        required_resp_start: str,
+        terminator: str,
+        timeout: float = 3.0,
+        retry_cnt: int = 1
+    ) -> Union[List[Event], SerialNotConnected, ResponseTimeout]:
+        if not self.__connected:
+            return SerialNotConnected(timestamp=time.time())
+        request = SerialRequest(
+            msg_out=req,
+            required_resp_start=required_resp_start,
+            required_resp_type=CLIResponseMessage,
+            timeout=timeout,
+            retry_cnt=retry_cnt,
+            terminator=terminator
+        )
+        self.__request_queue.put(request)
+        try:
+            return self.__response_queue.get(block=True, timeout=timeout * retry_cnt + 5.0)
+        except Empty:
+            err = RequestHandlerTimeout(request=req)
+            self.__event_to_log(event=err)
+            return err
