@@ -11,14 +11,15 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 
-def mock_read_until(msg: str, serial_timeout: float = 0.1):
+def mock_read_until(msg: str, serial_timeout: float = 0):
     count = 0
     while True:
         count += 1
         if count % 10 == 0:
             yield msg.encode('utf-8') + b"\r\n"
         else:
-            time.sleep(serial_timeout)  # mimic real read_until blocking until timeout
+            if serial_timeout > 0:
+                time.sleep(serial_timeout)  # mimic real read_until blocking until timeout
             yield b""
 
 
@@ -179,7 +180,7 @@ class TestSerialInterface(unittest.TestCase):
 
     @patch("PySerialInterface.SerialInterface.Serial")
     def test_handle_serial_request_specific_timeout(self, mock_serial_class):
-        self.mock_serial_instance.read_until.side_effect = mock_read_until("NOT OK")
+        self.mock_serial_instance.read_until.side_effect = mock_read_until("NOT OK", 0.1)
         mock_serial_class.return_value = self.mock_serial_instance
         self.si = SerialInterface(["COM1"])
         self.si.start()

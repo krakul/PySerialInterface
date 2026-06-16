@@ -234,6 +234,9 @@ class SerialInterface(Thread):
         while time.time() < timeout_time:
             msg = self.__read_message()
             if msg is None:
+                if self.__timeout == 0:
+                    # If timeout is 0, we are in non-blocking mode, so we need to wait a bit before retrying
+                    time.sleep(0.1)
                 continue
             if isinstance(msg, CLIResponseMessage):
                 if not capturing and msg.content.startswith(required_resp_start):
@@ -349,8 +352,13 @@ class SerialInterface(Thread):
         self.__logger.info("SerialRequestHandler thread stopped.")
 
     # Queue request and wait for response (up to 10 seconds)
-    def queue_request_wait_response(self, req, required_resp_start, resp_type=CLIResponseMessage,
-                                    timeout=1.5, retry_cnt=1):
+    def queue_request_wait_response(
+        self,
+        req,
+        required_resp_start,
+        resp_type=CLIResponseMessage,
+        timeout=1.5,
+        retry_cnt=1):
         if self.__connected:
             request = SerialRequest(
                 msg_out=req,
@@ -381,7 +389,7 @@ class SerialInterface(Thread):
         terminator: str,
         timeout: float = 3.0,
         retry_cnt: int = 1
-    ) -> Union[List[Event], SerialNotConnected, ResponseTimeout]:
+    ) -> Union[List[Event], SerialNotConnected, ResponseTimeout, RequestHandlerTimeout]:
         if not self.__connected:
             return SerialNotConnected(timestamp=time.time())
         request = SerialRequest(
