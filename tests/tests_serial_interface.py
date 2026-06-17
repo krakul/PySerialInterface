@@ -467,6 +467,50 @@ class TestSerialInterface(unittest.TestCase):
         )
         self.assertIsInstance(result, SerialNotConnected)
 
+    @patch("PySerialInterface.SerialInterface.Serial")
+    def test_multiline_response_ansi_characters(self, mock_serial_class):
+        # Returns empty bytes until write() is called, then serves the response sequence.
+        responses_after_write = [
+            b"biks info\r\n",
+            b"field1: value1\r\n",
+            b"field2: value2\r\n",
+            b"\x1b[1;32muart:~$\x1b[m\n",
+        ]
+        state = {"written": False, "index": 0}
+
+        def read_until_side_effect(*args, **kwargs):
+            if not state["written"]:
+                return b""
+            i = state["index"]
+            if i < len(responses_after_write):
+                state["index"] += 1
+                return responses_after_write[i]
+            return b""
+
+        def write_side_effect(data):
+            state["written"] = True
+
+        self.mock_serial_instance.read_until.side_effect = read_until_side_effect
+        self.mock_serial_instance.write.side_effect = write_side_effect
+        mock_serial_class.return_value = self.mock_serial_instance
+        self.si = SerialInterface(["COM1"])
+        self.si.start()
+        time.sleep(1)
+
+        result = self.si.queue_request_wait_multiline_response(
+            req="biks info",
+            required_resp_start="biks info",
+            terminator="uart:~$",
+            timeout=3.0
+        )
+
+        print(result)
+
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0].content, "biks info")
+        self.assertEqual(result[1].content, "field1: value1")
+        self.assertEqual(result[2].content, "field2: value2")
 
 if __name__ == '__main__':
     unittest.main()

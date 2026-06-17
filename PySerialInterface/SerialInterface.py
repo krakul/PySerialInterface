@@ -14,6 +14,7 @@ from threading import Thread
 from dataclasses_json import dataclass_json
 from serial import Serial, SerialException, serial_for_url
 from PySerialInterface.SerialRequest import Event, CLIResponseMessage, SerialRequest, EmptyMessage
+import re
 
 
 @dataclass_json
@@ -189,6 +190,10 @@ class SerialInterface(Thread):
         # Read line bytes - note that it can time out
         line = self.__serial.read_until(self.__msg_end_identifier)
         if line:
+            # Strip ANSI escape codes before parsing
+            ansi_escape = re.compile(rb'\x1b\[[0-9;]*[mGKH]')
+            line = ansi_escape.sub(b'', line)
+
             msg = SerialRequest.parse_message(line)
             if not isinstance(msg, EmptyMessage):
                 self.__event_to_log(event=msg, level=logging.DEBUG)
