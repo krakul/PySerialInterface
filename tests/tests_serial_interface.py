@@ -323,6 +323,7 @@ class TestSerialInterface(unittest.TestCase):
         result = self.si.queue_request_wait_multiline_response(
             req="biks info",
             required_resp_start="uart:~$ biks info",
+            required_resp_type=CLIResponseMessage,
             terminator="uart:~$",
             timeout=3.0
         )
@@ -364,6 +365,7 @@ class TestSerialInterface(unittest.TestCase):
         result = self.si.queue_request_wait_multiline_response(
             req="biks info",
             required_resp_start="uart:~$ biks info",
+            required_resp_type=CLIResponseMessage,
             terminator="uart:~$",
             timeout=0.5
         )
@@ -404,6 +406,7 @@ class TestSerialInterface(unittest.TestCase):
         result = self.si.queue_request_wait_multiline_response(
             req="biks info",
             required_resp_start="uart:~$ biks info",
+            required_resp_type=CLIResponseMessage,
             terminator="uart:~$",
             timeout=3.0
         )
@@ -448,6 +451,7 @@ class TestSerialInterface(unittest.TestCase):
         result = self.si.queue_request_wait_multiline_response(
             req="biks info",
             required_resp_start="uart:~$ biks info",
+            required_resp_type=CLIResponseMessage,
             terminator="uart:~$",
             timeout=timeout,
             retry_cnt=retry_cnt
@@ -463,6 +467,7 @@ class TestSerialInterface(unittest.TestCase):
         result = self.si.queue_request_wait_multiline_response(
             req="biks info",
             required_resp_start="uart:~$ biks info",
+            required_resp_type=CLIResponseMessage,
             terminator="uart:~$"
         )
         self.assertIsInstance(result, SerialNotConnected)
@@ -500,6 +505,7 @@ class TestSerialInterface(unittest.TestCase):
         result = self.si.queue_request_wait_multiline_response(
             req="biks info",
             required_resp_start="biks info",
+            required_resp_type=CLIResponseMessage,
             terminator="uart:~$",
             timeout=3.0
         )

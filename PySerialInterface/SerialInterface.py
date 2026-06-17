@@ -390,6 +390,7 @@ class SerialInterface(Thread):
         self,
         req: str,
         required_resp_start: str,
+        required_resp_type: Event,
         terminator: str,
         timeout: float = 3.0,
         retry_cnt: int = 1
@@ -399,7 +400,7 @@ class SerialInterface(Thread):
         request = SerialRequest(
             msg_out=req,
             required_resp_start=required_resp_start,
-            required_resp_type=CLIResponseMessage,
+            required_resp_type=required_resp_type,
             timeout=timeout,
             retry_cnt=retry_cnt,
             terminator=terminator
