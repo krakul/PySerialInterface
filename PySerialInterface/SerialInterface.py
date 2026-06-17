@@ -354,33 +354,32 @@ class SerialInterface(Thread):
     # Queue request and wait for response (up to 10 seconds)
     def queue_request_wait_response(
         self,
-        req,
-        required_resp_start,
-        resp_type=CLIResponseMessage,
-        timeout=1.5,
-        retry_cnt=1):
-        if self.__connected:
-            request = SerialRequest(
-                msg_out=req,
-                required_resp_start=required_resp_start,
-                required_resp_type=resp_type,
-                timeout=timeout,
-                retry_cnt=retry_cnt,
-                terminator=None)
-            self.__request_queue.put(request)
-            if required_resp_start is not None:
-                try:
-                    # Timeout has to 3 x each request timeout + some more
-                    return self.__response_queue.get(block=True, timeout=timeout * retry_cnt + 5.0)
-                except Empty:
-                    # It should not happen, but don't crash.
-                    err = RequestHandlerTimeout(request=req)
-                    self.__event_to_log(event=err)
-                    return err
-            else:
-                return EmptyMessage()
-        else:
+        req: str,
+        required_resp_start: str,
+        resp_type: Event = CLIResponseMessage,
+        timeout: float = 1.5,
+        retry_cnt: int = 1) -> Union[Event, SerialNotConnected, ResponseTimeout, RequestHandlerTimeout]:
+        if not self.__connected:
             return SerialNotConnected(timestamp=time.time())
+        request = SerialRequest(
+            msg_out=req,
+            required_resp_start=required_resp_start,
+            required_resp_type=resp_type,
+            timeout=timeout,
+            retry_cnt=retry_cnt,
+            terminator=None)
+        self.__request_queue.put(request)
+        if required_resp_start is not None:
+            try:
+                # Timeout has to 3 x each request timeout + some more
+                return self.__response_queue.get(block=True, timeout=timeout * retry_cnt + 5.0)
+            except Empty:
+                # It should not happen, but don't crash.
+                err = RequestHandlerTimeout(request=req)
+                self.__event_to_log(event=err)
+                return err
+        else:
+            return EmptyMessage()
 
     def queue_request_wait_multiline_response(
         self,
