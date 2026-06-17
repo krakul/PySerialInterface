@@ -32,13 +32,15 @@ class EmptyMessage(Event):
 
 
 class SerialRequest:
-    def __init__(self, msg_out, required_resp_start, required_resp_type, timeout: float, retry_cnt: int):
+    def __init__(self, msg_out, required_resp_start, required_resp_type, timeout: float, retry_cnt: int,
+                 terminator: Union[str, None] = None):
         self.msg_out = msg_out
         self.required_resp_start = required_resp_start
         self.required_resp_type = required_resp_type
         self.timeout: float = timeout
         self.retry_cnt: int = retry_cnt
         self.response: Union[Event, None] = None
+        self.terminator: Union[str, None] = terminator
 
     @staticmethod
     def cut_line_end_characters(line):
