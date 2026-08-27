@@ -518,5 +518,26 @@ class TestSerialInterface(unittest.TestCase):
         self.assertEqual(result[1].content, "field1: value1")
         self.assertEqual(result[2].content, "field2: value2")
 
+    @patch("PySerialInterface.SerialInterface.Serial")
+    def test_instances_do_not_share_queues(self, mock_serial_class):
+        # __request_queue/__response_queue used to be class attributes
+        # (Queue() built once at class-definition time), so every instance
+        # in a process shared one request queue and one response queue --
+        # concurrent instances could steal entries and responses meant for
+        # each other. Each instance must get its own private queues.
+        mock_serial_class.return_value = MagicMock()
+
+        si_a = SerialInterface(["COM1"], logger=self.logger)
+        si_b = SerialInterface(["COM2"], logger=self.logger)
+        try:
+            self.assertIsNot(si_a._SerialInterface__request_queue,
+                              si_b._SerialInterface__request_queue)
+            self.assertIsNot(si_a._SerialInterface__response_queue,
+                              si_b._SerialInterface__response_queue)
+        finally:
+            for si in (si_a, si_b):
+                if si.is_running():
+                    si.stop()
+
 if __name__ == '__main__':
     unittest.main()

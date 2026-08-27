@@ -59,8 +59,8 @@ class SerialInterface(Thread):
     __is_thread_running: bool = False
     __is_force_reconnect_requested: bool = False
     __connected: bool = False
-    __request_queue: Queue = Queue()
-    __response_queue: Queue = Queue()
+    __request_queue: Queue
+    __response_queue: Queue
 
     # Constructor
     def __init__(self, port_list: Union[List[str], str], baudrate=115200, timeout=0.1, logger=None,
@@ -100,6 +100,13 @@ class SerialInterface(Thread):
         self.__timeout: float = timeout
         self.__received_msg_cb = received_msg_cb
         self.__msg_end_identifier = msg_end_identifier
+        # Each instance needs its own queues: these were previously class
+        # attributes (Queue() built once at class-definition time), so every
+        # SerialInterface instance in a process shared one request queue and
+        # one response queue, letting concurrent instances steal entries and
+        # responses meant for each other.
+        self.__request_queue = Queue()
+        self.__response_queue = Queue()
 
     def get_serial(self):
         return self.__serial
